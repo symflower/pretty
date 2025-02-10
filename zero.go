@@ -4,7 +4,7 @@ import (
 	"reflect"
 )
 
-func nonzero(v reflect.Value) bool {
+func Nonzero(v reflect.Value) bool {
 	switch v.Kind() {
 	case reflect.Bool:
 		return v.Bool()
@@ -20,14 +20,14 @@ func nonzero(v reflect.Value) bool {
 		return v.String() != ""
 	case reflect.Struct:
 		for i := 0; i < v.NumField(); i++ {
-			if nonzero(getField(v, i)) {
+			if Nonzero(v.Field(i)) {
 				return true
 			}
 		}
 		return false
 	case reflect.Array:
 		for i := 0; i < v.Len(); i++ {
-			if nonzero(v.Index(i)) {
+			if Nonzero(v.Index(i)) {
 				return true
 			}
 		}

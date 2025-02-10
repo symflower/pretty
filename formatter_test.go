@@ -3,20 +3,17 @@ package pretty
 import (
 	"fmt"
 	"io"
+	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 	"unsafe"
 )
 
 type test struct {
 	v interface{}
 	s string
-}
-
-type passtest struct {
-	v    interface{}
-	f, s string
 }
 
 type LongStructTypeName struct {
@@ -39,42 +36,7 @@ func (f F) Format(s fmt.State, c rune) {
 	fmt.Fprintf(s, "F(%d)", int(f))
 }
 
-type Stringer struct{ i int }
-
-func (s *Stringer) String() string { return "foo" }
-
 var long = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-
-var passthrough = []passtest{
-	{1, "%d", "1"},
-	{"a", "%s", "a"},
-	{&Stringer{}, "%s", "foo"},
-}
-
-func TestPassthrough(t *testing.T) {
-	for _, tt := range passthrough {
-		s := fmt.Sprintf(tt.f, Formatter(tt.v))
-		if tt.s != s {
-			t.Errorf("expected %q", tt.s)
-			t.Errorf("got      %q", s)
-			t.Errorf("expraw\n%s", tt.s)
-			t.Errorf("gotraw\n%s", s)
-		}
-	}
-}
-
-type StructWithPrivateFields struct {
-	A string
-	b string
-}
-
-func NewStructWithPrivateFields(a string) StructWithPrivateFields {
-	return StructWithPrivateFields{a, "fixedb"}
-}
-
-func (s StructWithPrivateFields) GoString() string {
-	return fmt.Sprintf("NewStructWithPrivateFields(%q)", s.A)
-}
 
 var gosyntax = []test{
 	{nil, `nil`},
@@ -88,7 +50,6 @@ var gosyntax = []test{
 	//{make(chan int), "(chan int)(0x1234)"},
 	{unsafe.Pointer(uintptr(unsafe.Pointer(&long))), fmt.Sprintf("unsafe.Pointer(0x%02x)", uintptr(unsafe.Pointer(&long)))},
 	{func(int) {}, "func(int) {...}"},
-	{map[string]string{"a": "a", "b": "b"}, "map[string]string{\"a\":\"a\", \"b\":\"b\"}"},
 	{map[int]int{1: 1}, "map[int]int{1:1}"},
 	{int32(1), "int32(1)"},
 	{io.EOF, `&errors.errorString{s:"EOF"}`},
@@ -98,7 +59,6 @@ var gosyntax = []test{
 		`[]string{"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"}`,
 	},
 	{F(5), "pretty.F(5)"},
-	{NewStructWithPrivateFields("foo"), `NewStructWithPrivateFields("foo")`},
 	{
 		SA{&T{1, 2}, T{3, 4}},
 		`pretty.SA{
@@ -177,41 +137,6 @@ var gosyntax = []test{
     },
 }`,
 	},
-	{(*time.Time)(nil), "(*time.Time)(nil)"},
-	{&ValueGoString{"vgs"}, `VGS vgs`},
-	{(*ValueGoString)(nil), `(*pretty.ValueGoString)(nil)`},
-	{(*VGSWrapper)(nil), `(*pretty.VGSWrapper)(nil)`},
-	{&PointerGoString{"pgs"}, `PGS pgs`},
-	{(*PointerGoString)(nil), "(*pretty.PointerGoString)(nil)"},
-	{&PanicGoString{"oops!"}, `(*pretty.PanicGoString)(PANIC=calling method "GoString": oops!)`},
-}
-
-type ValueGoString struct {
-	s string
-}
-
-func (g ValueGoString) GoString() string {
-	return "VGS " + g.s
-}
-
-type VGSWrapper struct {
-	ValueGoString
-}
-
-type PointerGoString struct {
-	s string
-}
-
-func (g *PointerGoString) GoString() string {
-	return "PGS " + g.s
-}
-
-type PanicGoString struct {
-	s string
-}
-
-func (g *PanicGoString) GoString() string {
-	panic(g.s)
 }
 
 func TestGoSyntax(t *testing.T) {
@@ -336,4 +261,83 @@ func TestCycle(t *testing.T) {
 	iv := i.I().I().I().I().I().I().I().I().I().I()
 	*iv = *i
 	t.Logf("Example long interface cycle:\n%# v", Formatter(i))
+}
+
+type TestStringer struct {
+	ordinal int
+}
+
+func (s *TestStringer) String() string {
+	return strconv.Itoa(s.ordinal)
+}
+
+func TestReflectValuesByOrderLess(t *testing.T) {
+	type testCase struct {
+		Name string
+
+		Values []any
+
+		SortOrderIndices []uint
+	}
+
+	validate := func(t *testing.T, tc *testCase) {
+		t.Run(tc.Name, func(t *testing.T) {
+			if len(tc.Values) != len(tc.SortOrderIndices) {
+				t.Log("values and sorted indices must have same length")
+				t.FailNow()
+			}
+
+			reflects := make([]reflect.Value, len(tc.Values))
+			for i, v := range tc.Values {
+				reflects[i] = reflect.ValueOf(v)
+			}
+
+			// Sort which calls the "Less" function of the ordering definition.
+			sort.Sort(reflectValuesByOrder(reflects))
+
+			for i, v := range reflects {
+				actualValue := v.Interface()
+				expectedValue := tc.Values[tc.SortOrderIndices[i]]
+
+				if !reflect.DeepEqual(actualValue, expectedValue) {
+					t.Logf("index position: %d, expected: %v, actual: %v", i, expectedValue, actualValue)
+					t.FailNow()
+				}
+			}
+		})
+	}
+
+	validate(t, &testCase{
+		Name: "Integer Types",
+
+		Values: []any{1, 2, 3},
+
+		SortOrderIndices: []uint{0, 1, 2}, // All are integers so the order does not change.
+	})
+
+	validate(t, &testCase{
+		Name: "Mixed Types",
+
+		Values: []any{uint(1), 2},
+
+		SortOrderIndices: []uint{1, 0}, // The "<int Value>" is lexicographically lower than "<uint Value>" so it's sorted first.
+	})
+
+	validate(t, &testCase{
+		Name: "Stringer Type",
+
+		Values: []any{
+			&TestStringer{
+				ordinal: 3,
+			},
+			&TestStringer{
+				ordinal: 2,
+			},
+			&TestStringer{
+				ordinal: 1,
+			},
+		},
+
+		SortOrderIndices: []uint{2, 1, 0}, // If the type has a "String" method, that one's result is used for sorting.
+	})
 }

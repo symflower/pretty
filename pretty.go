@@ -30,6 +30,11 @@ func Fprintf(w io.Writer, format string, a ...interface{}) (n int, error error) 
 	return fmt.Fprintf(w, format, wrap(a, false)...)
 }
 
+// LazyFprintf works just like pretty.Fprintf but does not print fields with zero values.
+func LazyFprintf(w io.Writer, format string, a ...interface{}) (n int, error error) {
+	return fmt.Fprintf(w, format, lazyWrap(a, false)...)
+}
+
 // Log is a convenience wrapper for log.Printf.
 //
 // Calling Log(x, y) is equivalent to
@@ -75,7 +80,7 @@ func Printf(format string, a ...interface{}) (n int, errno error) {
 
 // Println pretty-prints its operands and writes to standard output.
 //
-// Calling Println(x, y) is equivalent to
+// Calling Print(x, y) is equivalent to
 // fmt.Println(Formatter(x), Formatter(y)), but each operand is
 // formatted with "%# v".
 func Println(a ...interface{}) (n int, errno error) {
@@ -99,10 +104,23 @@ func Sprintf(format string, a ...interface{}) string {
 	return fmt.Sprintf(format, wrap(a, false)...)
 }
 
+// LazySprintf works just like pretty.Sprintf but does not print fields with zero values.
+func LazySprintf(format string, a ...interface{}) string {
+	return fmt.Sprintf(format, lazyWrap(a, false)...)
+}
+
 func wrap(a []interface{}, force bool) []interface{} {
 	w := make([]interface{}, len(a))
 	for i, x := range a {
 		w[i] = formatter{v: reflect.ValueOf(x), force: force}
+	}
+	return w
+}
+
+func lazyWrap(a []interface{}, force bool) []interface{} {
+	w := make([]interface{}, len(a))
+	for i, x := range a {
+		w[i] = formatter{v: reflect.ValueOf(x), force: force, lazy: true}
 	}
 	return w
 }
